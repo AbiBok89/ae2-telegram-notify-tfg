@@ -8,9 +8,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -126,5 +132,133 @@ class TelegramClientTest {
                 .join();
         assertFalse(missing.found());
         assertNull(missing.error());
+    }
+
+    @Test
+    void sendMessageViaSocks5ProxyWithAuthAndRemoteDns() throws Exception {
+        AtomicReference<String> capturedTargetHost = new AtomicReference<>();
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+
+        server.createContext("/botPROXY_TOKEN/sendMessage", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            capturedBody.set(body);
+            byte[] out = "{\"ok\":true,\"result\":{\"message_id\":42}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, out.length);
+            exchange.getResponseBody().write(out);
+            exchange.close();
+        });
+
+        ExecutorService relayPool = Executors.newCachedThreadPool();
+        try (ServerSocket socksServer = new ServerSocket(0)) {
+            int socksPort = socksServer.getLocalPort();
+            int httpPort = server.getAddress().getPort();
+
+            relayPool.submit(() -> handleSingleSocks5Client(
+                    socksServer, "user1", "pass2", httpPort, capturedTargetHost, relayPool));
+
+            TelegramClient.ProxyConfig proxyConfig = new TelegramClient.ProxyConfig(
+                    TelegramClient.ProxyType.SOCKS5, "127.0.0.1", socksPort, "user1", "pass2");
+
+            String remoteOnlyBaseUrl = "http://remote-only-telegram.invalid:" + httpPort;
+            TelegramClient.SendResult res = TelegramClient
+                    .sendMessageAsync(remoteOnlyBaseUrl, "PROXY_TOKEN", "555", "<b>Via SOCKS5</b>", 5, proxyConfig)
+                    .join();
+
+            assertTrue(res.ok(), "Expected success via SOCKS5, got error: " + res.error());
+            assertEquals("remote-only-telegram.invalid", capturedTargetHost.get());
+            JsonObject parsed = JsonParser.parseString(capturedBody.get()).getAsJsonObject();
+            assertEquals("555", parsed.get("chat_id").getAsString());
+            assertEquals("<b>Via SOCKS5</b>", parsed.get("text").getAsString());
+        } finally {
+            relayPool.shutdownNow();
+        }
+    }
+
+    @Test
+    void sendMessageViaSocks5ReportsRejectedCredentials() throws Exception {
+        ExecutorService relayPool = Executors.newCachedThreadPool();
+        try (ServerSocket socksServer = new ServerSocket(0)) {
+            int socksPort = socksServer.getLocalPort();
+            int httpPort = server.getAddress().getPort();
+
+            relayPool.submit(() -> handleSingleSocks5Client(
+                    socksServer, "expectedUser", "expectedPass", httpPort, new AtomicReference<>(), relayPool));
+
+            TelegramClient.ProxyConfig badProxy = new TelegramClient.ProxyConfig(
+                    TelegramClient.ProxyType.SOCKS5, "127.0.0.1", socksPort, "wrongUser", "wrongPass");
+
+            TelegramClient.SendResult res = TelegramClient
+                    .sendMessageAsync(baseUrl, "PROXY_TOKEN", "555", "<b>Fail</b>", 5, badProxy)
+                    .join();
+
+            assertFalse(res.ok());
+            assertNotNull(res.error());
+            assertTrue(res.error().contains("authentication rejected"), "Unexpected error: " + res.error());
+        } finally {
+            relayPool.shutdownNow();
+        }
+    }
+
+    private static void handleSingleSocks5Client(
+            ServerSocket socksServer,
+            String expectedUser,
+            String expectedPass,
+            int forwardPort,
+            AtomicReference<String> capturedHost,
+            ExecutorService pool
+    ) {
+        try (Socket client = socksServer.accept()) {
+            InputStream in = client.getInputStream();
+            OutputStream out = client.getOutputStream();
+
+            int ver = in.read();
+            int nMethods = in.read();
+            if (ver != 0x05 || nMethods <= 0) {
+                return;
+            }
+            in.readNBytes(nMethods);
+            // Require username/password auth (0x02)
+            out.write(new byte[]{0x05, 0x02});
+            out.flush();
+
+            int authVer = in.read();
+            int uLen = in.read();
+            String user = new String(in.readNBytes(uLen), StandardCharsets.UTF_8);
+            int pLen = in.read();
+            String pass = new String(in.readNBytes(pLen), StandardCharsets.UTF_8);
+            if (authVer != 0x01 || !expectedUser.equals(user) || !expectedPass.equals(pass)) {
+                out.write(new byte[]{0x01, 0x01});
+                out.flush();
+                return;
+            }
+            out.write(new byte[]{0x01, 0x00});
+            out.flush();
+
+            byte[] reqHead = in.readNBytes(4);
+            if (reqHead.length < 4 || reqHead[1] != 0x01 || reqHead[3] != 0x03) {
+                return;
+            }
+            int hostLen = in.read();
+            String targetHost = new String(in.readNBytes(hostLen), StandardCharsets.UTF_8);
+            in.readNBytes(2); // target port
+            capturedHost.set(targetHost);
+
+            try (Socket upstream = new Socket("127.0.0.1", forwardPort)) {
+                out.write(new byte[]{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0});
+                out.flush();
+
+                pool.submit(() -> copyQuietly(in, upstream));
+                copyQuietly(upstream.getInputStream(), client);
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void copyQuietly(InputStream in, Socket target) {
+        try {
+            in.transferTo(target.getOutputStream());
+            target.shutdownOutput();
+        } catch (IOException ignored) {
+        }
     }
 }

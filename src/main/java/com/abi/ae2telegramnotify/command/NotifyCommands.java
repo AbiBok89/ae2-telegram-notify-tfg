@@ -116,8 +116,9 @@ public final class NotifyCommands {
         String apiBaseUrl = Config.API_BASE_URL.get();
         int timeout = Config.REQUEST_TIMEOUT_SECONDS.get();
         String language = Config.LANGUAGE.get();
+        TelegramClient.ProxyConfig proxyConfig = Config.proxyConfig();
 
-        TelegramClient.findChatByLinkCodeAsync(apiBaseUrl, botToken, pending.code(), timeout)
+        TelegramClient.findChatByLinkCodeAsync(apiBaseUrl, botToken, pending.code(), timeout, proxyConfig)
                 .thenAccept(pollResult -> server.execute(() -> {
                     if (pollResult.error() != null) {
                         player.sendSystemMessage(Component.literal(
@@ -146,7 +147,7 @@ public final class NotifyCommands {
                             + "</b> успешно привязан к этому чату!"
                             : "✅ Minecraft account <b>" + TelegramMessageFormatter.escapeHtml(playerName)
                             + "</b> has been linked to this chat!";
-                    TelegramClient.sendMessageAsync(apiBaseUrl, botToken, chatId, confirmMsg, timeout);
+                    TelegramClient.sendMessageAsync(apiBaseUrl, botToken, chatId, confirmMsg, timeout, proxyConfig);
                 }));
         return 1;
     }
@@ -237,7 +238,8 @@ public final class NotifyCommands {
                 botToken,
                 chatId,
                 text,
-                Config.REQUEST_TIMEOUT_SECONDS.get()
+                Config.REQUEST_TIMEOUT_SECONDS.get(),
+                Config.proxyConfig()
         ).thenAccept(result -> server.execute(() -> {
             if (result.ok()) {
                 player.sendSystemMessage(Component.literal(
@@ -285,6 +287,7 @@ public final class NotifyCommands {
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "AE2 Telegram Notify | enabled=" + Config.ENABLED.get()
                         + " | botConfigured=" + hasToken
+                        + " | proxy=" + Config.proxyConfig().describe()
                         + " | boundPlayers=" + count)
                 .withStyle(ChatFormatting.AQUA), false);
         return 1;

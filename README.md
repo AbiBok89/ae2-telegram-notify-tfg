@@ -25,7 +25,16 @@
 1. Создайте бота через `@BotFather` в Telegram и скопируйте токен (`123456789:ABC...`).
 2. Запустите сервер/игру один раз, чтобы создался конфиг `config/ae2telegramnotify-common.toml`.
 3. Впишите токен в `botToken = "..."` (и при желании `defaultChatId = "..."` для общего чата).
-4. Перезапустите сервер/игру.
+4. **Если сервер находится в РФ / за блокировкой Telegram**, настройте прокси только для запросов к Telegram прямо в `[telegram]` в `ae2telegramnotify-common.toml`:
+   ```toml
+   proxyType = "SOCKS5" # NONE, SOCKS5 или HTTP
+   proxyHost = "1.2.3.4"
+   proxyPort = 1080
+   proxyUsername = ""   # при необходимости
+   proxyPassword = ""   # при необходимости
+   ```
+   (Либо укажите свой reverse proxy в `apiBaseUrl = "https://..."`.)
+5. Перезапустите сервер/игру (или примените конфиг и проверьте в игре командой `/aenotify test`).
 
 ## Команды в игре
 - `/aenotify link` — выдаёт одноразовый код привязки (на 5 минут). Отправьте его боту в Telegram, затем введите:

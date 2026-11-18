@@ -121,7 +121,8 @@ public final class CraftingCompletionHandler {
                     botToken,
                     chatId,
                     message,
-                    Config.REQUEST_TIMEOUT_SECONDS.get()
+                    Config.REQUEST_TIMEOUT_SECONDS.get(),
+                    Config.proxyConfig()
             ).thenAccept(result -> {
                 if (!result.ok()) {
                     LOGGER.warn("Failed to deliver AE2 Telegram notification to chatId={} for player={}: {}",
