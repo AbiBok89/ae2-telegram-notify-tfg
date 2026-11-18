@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.abi.ae2telegramnotify.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "ae2telegramnotify.refmap.json",
+  "mixins": [
+    "CraftingCpuLogicMixin",
+    "ExecutingCraftingJobAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
